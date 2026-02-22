@@ -13,6 +13,7 @@ const stats = {
   installations: new Set<string>(),
   pullRequestsReviewed: 0,
   repositories: new Set<string>(),
+  subscriptions: new Map<string, { plan: string; since: Date }>(), // installationId -> {plan, since}
 };
 
 // Create webhooks instance - simplified
@@ -42,7 +43,58 @@ app.get('/stats', (req, res) => {
     installations: stats.installations.size,
     pullRequestsReviewed: stats.pullRequestsReviewed,
     repositories: stats.repositories.size,
+    subscriptions: stats.subscriptions.size,
   });
+});
+
+// GitHub Marketplace webhook endpoint
+app.post('/webhook/marketplace', async (req, res) => {
+  const payload = req.body as any;
+  const action = payload.action;
+  
+  console.log(`Marketplace event: ${action}`);
+  
+  // Handle marketplace events
+  switch (action) {
+    case 'purchased':
+      // User bought a plan
+      const account = payload.marketplace_purchase.account.login;
+      const plan = payload.marketplace_purchase.plan.name;
+      const installationId = String(payload.marketplace_purchase.account.id);
+      stats.subscriptions.set(installationId, { plan, since: new Date() });
+      console.log(`New purchase: ${account} - ${plan} (install: ${installationId})`);
+      break;
+      
+    case 'cancelled':
+      // User cancelled subscription
+      const cancelId = String(payload.marketplace_purchase.account.id);
+      stats.subscriptions.delete(cancelId);
+      console.log(`Cancelled: ${payload.marketplace_purchase.account.login}`);
+      break;
+      
+    case 'changed':
+      // User changed plan
+      const changeId = String(payload.marketplace_purchase.account.id);
+      const newPlan = payload.marketplace_purchase.plan.name;
+      stats.subscriptions.set(changeId, { plan: newPlan, since: new Date() });
+      console.log(`Plan changed: ${payload.marketplace_purchase.account.login} - ${newPlan}`);
+      break;
+      
+    case 'pending_change':
+      // Plan change pending
+      console.log(`Pending change: ${payload.marketplace_purchase.account.login}`);
+      break;
+      
+    case 'pending_cancellation':
+      // Cancellation pending
+      console.log(`Pending cancellation: ${payload.marketplace_purchase.account.login}`);
+      break;
+      
+    default:
+      console.log(`Unhandled marketplace action: ${action}`);
+  }
+  
+  res.json({ ok: true, action });
 });
 
 // Webhook endpoint
