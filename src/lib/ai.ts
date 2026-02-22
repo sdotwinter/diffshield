@@ -31,19 +31,15 @@ export async function generateAISummary(
   const stats = diff.stats;
   const hasCode = codeFiles && codeFiles.length > 0;
   
-  // Simple prompt
+  // Ultra-simple prompt
   let prompt = '';
   
   if (hasCode) {
-    const codeSummary = codeFiles
-      .slice(0, 3)
-      .map(f => f.filename)
-      .join(', ');
-    prompt = `${codeSummary} changed.`;
+    prompt = 'Updated code files.';
   } else if (docType.type !== 'other') {
-    prompt = `Updated ${docType.type} docs.`;
+    prompt = 'Updated docs.';
   } else {
-    prompt = `Updated ${stats.added + stats.modified} lines.`;
+    prompt = 'Updated files.';
   }
 
   try {
@@ -92,15 +88,15 @@ export async function generatePRDescription(
   const stats = diff.stats;
   const hasCode = codeFiles && codeFiles.length > 0;
   
-  // Simple prompt
+  // Ultra-simple prompt
   let prompt = '';
   
   if (hasCode) {
-    prompt = `This PR updates ${codeFiles?.length || 0} files.`;
+    prompt = 'Updated code.';
   } else if (docType.type !== 'other') {
-    prompt = `This PR updates the ${docType.type} documentation.`;
+    prompt = 'Updated documentation.';
   } else {
-    prompt = `This PR makes changes to ${stats.added + stats.modified} lines.`;
+    prompt = 'Updated files.';
   }
 
   try {

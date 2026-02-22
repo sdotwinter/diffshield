@@ -355,7 +355,7 @@ async function postReviewResults(
 ) {
   const { docType, semanticDiff, findings, summary, aiSummary, prDescription } = result;
   
-  // Update PR description if we have one
+  // Update PR description if we have one (but don't post as comment)
   if (prDescription && !pullRequest.body) {
     try {
       await github.octokit.pulls.update({
