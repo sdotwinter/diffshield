@@ -4,6 +4,7 @@ import { ReviewResult, CheckRunConclusion, WebhookPayload, DocDocument, Semantic
 import { parseMarkdown } from '../lib/markdown';
 import { computeSemanticDiff, generateDiffSummary } from '../lib/diff';
 import { classifyDocument, generateReviewChecklist, validateLinks } from '../lib/classifier';
+import { generateAISummary } from '../lib/ai';
 
 interface GitHubClient {
   octokit: Octokit;
@@ -167,12 +168,31 @@ export async function handlePullRequest(
     });
   }
   
+  // Generate AI summary if API key is configured
+  let aiSummary = '';
+  if (process.env.MINIMAX_API_KEY && process.env.MINIMAX_GROUP_ID) {
+    try {
+      aiSummary = await generateAISummary(
+        docType || { type: 'other', confidence: 0, indicators: [] },
+        semanticDiff,
+        allFindings,
+        {
+          apiKey: process.env.MINIMAX_API_KEY,
+          groupId: process.env.MINIMAX_GROUP_ID,
+        }
+      );
+    } catch (e) {
+      console.error('AI summary error:', e);
+    }
+  }
+  
   // Post results to GitHub
   await postReviewResults(github, repository, pull_request, {
     docType: docType || { type: 'other', confidence: 0, indicators: [] },
     semanticDiff,
     findings: allFindings,
     summary,
+    aiSummary,
   });
   
   return {
@@ -183,6 +203,7 @@ export async function handlePullRequest(
     semanticDiff,
     findings: allFindings,
     summary,
+    aiSummary,
   };
 }
 
@@ -254,9 +275,10 @@ async function postReviewResults(
     semanticDiff: SemanticDiff;
     findings: ReviewFinding[];
     summary: string;
+    aiSummary?: string;
   }
 ) {
-  const { docType, semanticDiff, findings, summary } = result;
+  const { docType, semanticDiff, findings, summary, aiSummary } = result;
   
   // Create check run
   const checkBody: CheckRunConclusion = {
@@ -292,7 +314,7 @@ async function postReviewResults(
   }
   
   // Post comment
-  const commentBody = generatePRComment(docType, semanticDiff, findings);
+  const commentBody = generatePRComment(docType, semanticDiff, findings, aiSummary);
   
   try {
     await github.octokit.issues.createComment({
@@ -319,9 +341,15 @@ ${errors} error(s), ${warnings} warning(s), ${infos} info(s)`;
 function generatePRComment(
   docType: DocTypeClassification,
   semanticDiff: SemanticDiff,
-  findings: ReviewFinding[]
+  findings: ReviewFinding[],
+  aiSummary?: string
 ): string {
   let comment = `## 📄 DiffShield Review\n\n`;
+  
+  // Add AI summary at the top if available
+  if (aiSummary) {
+    comment += `**AI Summary:** ${aiSummary}\n\n---\n\n`;
+  }
   
   comment += `**Document Type:** ${docType.type.toUpperCase()} (${Math.round(docType.confidence * 100)}% confidence)\n\n`;
   

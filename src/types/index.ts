@@ -128,6 +128,7 @@ export interface ReviewResult {
   semanticDiff: SemanticDiff;
   findings: ReviewFinding[];
   summary: string;
+  aiSummary?: string;
 }
 
 // Check run payload
