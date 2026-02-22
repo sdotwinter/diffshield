@@ -41,18 +41,10 @@ export async function generateAISummary(
       .slice(0, 5)
       .join(', ');
     
-    prompt = `Summarize these changes in ONE short sentence (max 20 words):
-- Code: ${codeSummary}
-${stats.added + stats.removed > 0 ? `- Docs: +${stats.added} -${stats.removed} sections` : ''}
-
-Focus on what this PR does overall.`;
+    prompt = `PR summary (1 sentence, 15 words max): Code changed: ${codeSummary}.`;
   } else if (docType.type !== 'other') {
     // Docs only PR
-    prompt = `Summarize these documentation changes in ONE short sentence (max 15 words):
-- Doc type: ${docType.type}
-- Changes: +${stats.added} added, -${stats.removed} removed, ~${stats.modified} modified
-
-Example: "Updated README with new installation steps" or "Added API documentation for auth endpoints"`;
+    prompt = `PR summary (1 sentence, 15 words max): Docs: ${docType.type} +${stats.added} -${stats.removed} sections.`;
   } else {
     // Other/unknown
     prompt = `Summarize these changes in ONE short sentence (max 15 words):
