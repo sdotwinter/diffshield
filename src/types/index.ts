@@ -69,9 +69,9 @@ export interface TableInfo {
   lineStart: number;
 }
 
-export {
+export interface CodeBlockInfo {
   id: string;
-  language interface CodeBlockInfo: string | null;
+  language: string | null;
   lineStart: number;
   lineEnd: number;
 }
