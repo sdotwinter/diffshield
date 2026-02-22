@@ -105,7 +105,7 @@ export interface SemanticDiff {
 }
 
 export interface DocTypeClassification {
-  type: 'sop' | 'adr' | 'readme' | 'runbook' | 'pricing' | 'changelog' | 'guide' | 'other';
+  type: 'sop' | 'adr' | 'readme' | 'runbook' | 'pricing' | 'changelog' | 'guide' | 'api' | 'contrib' | 'other';
   confidence: number;
   indicators: string[];
 }
