@@ -92,16 +92,17 @@ app.post('/webhook', async (req, res) => {
   
   // Handle installation events (track usage)
   if (eventType === 'installation') {
-  if (action === 'created') {
-    const installationId = String(payload.installation?.id);
-    stats.installations.add(installationId);
-    console.log(`New installation: ${installationId}`);
-  }
-  
-  if (action === 'deleted') {
-    const installationId = String(payload.installation?.id);
-    stats.installations.delete(installationId);
-    console.log(`Uninstalled: ${installationId}`);
+    if (action === 'created') {
+      const installationId = String(payload.installation?.id);
+      stats.installations.add(installationId);
+      console.log(`New installation: ${installationId}`);
+    }
+    
+    if (action === 'deleted') {
+      const installationId = String(payload.installation?.id);
+      stats.installations.delete(installationId);
+      console.log(`Uninstalled: ${installationId}`);
+    }
   }
   
   // Handle pull request events
