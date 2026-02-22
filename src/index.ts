@@ -47,64 +47,51 @@ app.get('/stats', (req, res) => {
   });
 });
 
-// GitHub Marketplace webhook endpoint
-app.post('/webhook/marketplace', async (req, res) => {
-  const payload = req.body as any;
-  const action = payload.action;
-  
-  console.log(`Marketplace event: ${action}`);
-  
-  // Handle marketplace events
-  switch (action) {
-    case 'purchased':
-      // User bought a plan
-      const account = payload.marketplace_purchase.account.login;
-      const plan = payload.marketplace_purchase.plan.name;
-      const installationId = String(payload.marketplace_purchase.account.id);
-      stats.subscriptions.set(installationId, { plan, since: new Date() });
-      console.log(`New purchase: ${account} - ${plan} (install: ${installationId})`);
-      break;
-      
-    case 'cancelled':
-      // User cancelled subscription
-      const cancelId = String(payload.marketplace_purchase.account.id);
-      stats.subscriptions.delete(cancelId);
-      console.log(`Cancelled: ${payload.marketplace_purchase.account.login}`);
-      break;
-      
-    case 'changed':
-      // User changed plan
-      const changeId = String(payload.marketplace_purchase.account.id);
-      const newPlan = payload.marketplace_purchase.plan.name;
-      stats.subscriptions.set(changeId, { plan: newPlan, since: new Date() });
-      console.log(`Plan changed: ${payload.marketplace_purchase.account.login} - ${newPlan}`);
-      break;
-      
-    case 'pending_change':
-      // Plan change pending
-      console.log(`Pending change: ${payload.marketplace_purchase.account.login}`);
-      break;
-      
-    case 'pending_cancellation':
-      // Cancellation pending
-      console.log(`Pending cancellation: ${payload.marketplace_purchase.account.login}`);
-      break;
-      
-    default:
-      console.log(`Unhandled marketplace action: ${action}`);
-  }
-  
-  res.json({ ok: true, action });
-});
-
 // Webhook endpoint
 app.post('/webhook', async (req, res) => {
+  const eventType = req.headers['x-github-event'] as string;
   const payload = req.body as WebhookPayload;
   const action = payload.action;
   
-  console.log(`Received webhook: ${action}`);
+  console.log(`Received webhook: ${eventType} - ${action}`);
+  
+  // Handle GitHub Marketplace events
+  if (eventType === 'marketplace_purchase') {
+    const marketplaceAction = payload.action;
+    console.log(`Marketplace event: ${marketplaceAction}`);
+    
+    switch (marketplaceAction) {
+      case 'purchased':
+        const account = (payload as any).marketplace_purchase?.account?.login;
+        const plan = (payload as any).marketplace_purchase?.plan?.name;
+        const installId = String((payload as any).marketplace_purchase?.account?.id);
+        if (account && plan) {
+          stats.subscriptions.set(installId, { plan, since: new Date() });
+          console.log(`New purchase: ${account} - ${plan}`);
+        }
+        break;
+        
+      case 'cancelled':
+        const cancelId = String((payload as any).marketplace_purchase?.account?.id);
+        stats.subscriptions.delete(cancelId);
+        console.log(`Cancelled: ${(payload as any).marketplace_purchase?.account?.login}`);
+        break;
+        
+      case 'changed':
+        const changeId = String((payload as any).marketplace_purchase?.account?.id);
+        const newPlan = (payload as any).marketplace_purchase?.plan?.name;
+        if (newPlan) {
+          stats.subscriptions.set(changeId, { plan: newPlan, since: new Date() });
+          console.log(`Plan changed: ${(payload as any).marketplace_purchase?.account?.login} - ${newPlan}`);
+        }
+        break;
+    }
+    
+    return res.json({ ok: true, event: 'marketplace_purchase', action: marketplaceAction });
+  }
   
   // Handle installation events (track usage)
+  if (eventType === 'installation') {
   if (action === 'created') {
     const installationId = String(payload.installation?.id);
     stats.installations.add(installationId);
