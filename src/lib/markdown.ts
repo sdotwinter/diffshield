@@ -49,7 +49,7 @@ export function parseMarkdown(content: string, filePath: string): DocDocument {
       }
       
       // Get content between this heading and next
-      const sectionContent = extractSectionContent(tree, index);
+      const sectionContent = extractSectionContent(tree, index ?? 0);
       
       sections.push({
         id: `section-${sectionCounter++}`,
