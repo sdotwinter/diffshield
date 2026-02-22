@@ -1,4 +1,4 @@
-// Types for DocSMind
+// Types for DiffShield
 
 export interface GitHubConfig {
   appId: string;

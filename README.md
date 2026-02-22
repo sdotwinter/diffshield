@@ -1,4 +1,4 @@
-# DocSMind - AI Documentation Review for GitHub
+# DiffShield - AI Documentation Review for GitHub
 
 AI-powered Markdown documentation review for GitHub PRs.
 

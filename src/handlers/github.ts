@@ -266,7 +266,7 @@ async function postReviewResults(
     await github.octokit.checks.create({
       owner: repository.owner.login,
       repo: repository.name,
-      name: 'DocSMind Review',
+      name: 'DiffShield Review',
       head_sha: pullRequest.head.sha,
       status: 'completed',
       conclusion: checkBody.conclusion,
@@ -306,7 +306,7 @@ function generatePRComment(
   semanticDiff: SemanticDiff,
   findings: ReviewFinding[]
 ): string {
-  let comment = `## 📄 DocSMind Review\n\n`;
+  let comment = `## 📄 DiffShield Review\n\n`;
   
   comment += `**Document Type:** ${docType.type.toUpperCase()} (${Math.round(docType.confidence * 100)}% confidence)\n\n`;
   
@@ -336,7 +336,7 @@ function generatePRComment(
     }
   }
   
-  comment += `\n---\n*DocSMind - AI Documentation Review*`;
+  comment += `\n---\n*DiffShield - AI Documentation Review*`;
   
   return comment;
 }

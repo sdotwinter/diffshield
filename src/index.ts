@@ -30,7 +30,7 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.json({ 
     status: 'ok', 
-    service: 'DocSMind',
+    service: 'DiffShield',
     version: '1.0.0',
   });
 });
@@ -67,7 +67,7 @@ app.post('/webhook', async (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`DocSMind listening on port ${PORT}`);
+  console.log(`DiffShield listening on port ${PORT}`);
   console.log(`Webhook endpoint: /webhook`);
 });
 
