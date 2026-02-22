@@ -3,7 +3,7 @@ import { createAppAuth } from '@octokit/auth-app';
 import { ReviewResult, CheckRunConclusion, WebhookPayload, DocDocument, SemanticDiff, DocTypeClassification, ReviewFinding, DocSection } from '../types';
 import { parseMarkdown } from '../lib/markdown';
 import { computeSemanticDiff, generateDiffSummary } from '../lib/diff';
-import { classifyDocument, generateReviewChecklist } from '../lib/classifier';
+import { classifyDocument, generateReviewChecklist, validateLinks } from '../lib/classifier';
 
 interface GitHubClient {
   octokit: Octokit;
@@ -81,16 +81,41 @@ export async function handlePullRequest(
     ]);
     
     if (!baseContent || !headContent) {
-      // New file - treat as added
+      // New file - analyze the content instead of diff
       const newDoc = parseMarkdown(headContent || baseContent || '', file.filename);
       docType = classifyDocument(newDoc);
       
-      allFindings.push({
-        type: 'info',
-        category: 'content',
-        message: `New document added: ${file.filename}`,
-        file: file.filename,
-      });
+      // Validate links in new document
+      const linkFindings = validateLinks(newDoc);
+      allFindings.push(...linkFindings.map(f => ({ ...f, file: file.filename })));
+      
+      // Generate findings based on doc type for new file
+      if (newDoc.sections.length > 0) {
+        allFindings.push({
+          type: 'info',
+          category: 'content',
+          message: `New document: ${newDoc.sections.length} section(s), ${newDoc.tables.length} table(s), ${newDoc.codeBlocks.length} code block(s)`,
+          file: file.filename,
+        });
+      }
+      
+      if (newDoc.tables.length > 0 && docType.type !== 'pricing' && docType.type !== 'adr') {
+        allFindings.push({
+          type: 'info',
+          category: 'content',
+          message: `Document has ${newDoc.tables.length} table(s) - consider if this should be verified`,
+          file: file.filename,
+        });
+      }
+      
+      if (newDoc.codeBlocks.length > 0) {
+        allFindings.push({
+          type: 'info',
+          category: 'content',
+          message: `Document has ${newDoc.codeBlocks.length} code block(s) - verify examples are correct`,
+          file: file.filename,
+        });
+      }
       
       changes.push({
         type: 'added',
@@ -192,20 +217,11 @@ function analyzeChanges(
   oldDoc: DocDocument,
   newDoc: DocDocument
 ): ReviewFinding[] {
-  const findings: ReviewFinding[] = [];
+  // Use the new validateLinks function for comprehensive link checking
+  const linkFindings = validateLinks(newDoc);
+  const findings = linkFindings.map(f => ({ ...f, file: filename }));
   
-  // Check for broken links
-  const brokenLinks = findBrokenLinks(newDoc.links, oldDoc.sections);
-  for (const link of brokenLinks) {
-    findings.push({
-      type: 'warning',
-      category: 'link',
-      message: `Broken or missing link: ${link.url}`,
-      file: filename,
-    });
-  }
-  
-  // Check for section removals
+  // Also check for section removals
   const removed = diff.sections.filter(s => s.type === 'removed');
   if (removed.length > 0) {
     findings.push({
@@ -227,15 +243,6 @@ function analyzeChanges(
   }
   
   return findings;
-}
-
-function findBrokenLinks(links: any[], sections: DocSection[]): any[] {
-  const sectionPaths = new Set(sections.map(s => s.path));
-  
-  return links.filter(link => {
-    if (!link.isInternal || !link.targetPath) return false;
-    return !sectionPaths.has(link.targetPath);
-  });
 }
 
 async function postReviewResults(
