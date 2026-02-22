@@ -27,13 +27,13 @@ export async function generateAISummary(
     .slice(0, 5)
     .join('\n- ');
   
-  const prompt = `You are a documentation review assistant. Summarize this PR's documentation changes in 2-3 sentences for a developer.
+  const prompt = `Write ONE short sentence (max 15 words) summarizing these documentation changes for a developer:
 
-Document Type: ${docType.type} (${Math.round(docType.confidence * 100)}% confidence)
+Doc type: ${docType.type}
 Changes: +${stats.added} added, -${stats.removed} removed, ~${stats.modified} modified
-${findingSummary ? `Key Findings:\n- ${findingSummary}` : ''}
 
-Write a concise, helpful summary in plain English. Focus on what changed and why it matters.`;
+Example: "Updated installation steps to include new dependency" or "Added pricing tier for enterprise users"
+Focus on what changed and why it matters.`;
 
   try {
     const response = await fetch(MINIMAX_API_URL, {
@@ -47,7 +47,7 @@ Write a concise, helpful summary in plain English. Focus on what changed and why
         messages: [{ role: 'user', content: prompt }],
         groupId: groupId,
         temperature: 0.3,
-        max_tokens: 200,
+        max_tokens: 50,
       }),
     });
     
