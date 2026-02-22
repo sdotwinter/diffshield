@@ -112,7 +112,7 @@ export interface DocTypeClassification {
 
 export interface ReviewFinding {
   type: 'info' | 'warning' | 'error';
-  category: 'structure' | 'style' | 'link' | 'content' | 'security';
+  category: 'structure' | 'style' | 'link' | 'content' | 'security' | 'code' | 'diff';
   message: string;
   file?: string;
   line?: number;
