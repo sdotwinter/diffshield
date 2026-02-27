@@ -192,7 +192,7 @@ export async function generateV2Review(
       body: JSON.stringify({
         model: 'MiniMax-M2.5',
         messages: [{ role: 'user', content: prompt }],
-        groupId: groupId,
+        group_id: groupId,
         temperature: 0.3,
         max_tokens: 2000,
       }),
@@ -233,6 +233,116 @@ export async function generateV2PRDescription(
 }
 
 /**
+ * Generate deterministic fallback v2 review when AI fails
+ */
+export function generateDeterministicFallback(
+  prContext: PRContext,
+  docType: DocTypeClassification,
+  semanticDiff: SemanticDiff,
+  findings: ReviewFinding[]
+): V2ReviewOutput {
+  const errors = findings.filter(f => f.type === 'error');
+  const warnings = findings.filter(f => f.type === 'warning');
+  
+  // Determine verdict based on findings
+  let verdict: V2Verdict['verdict'] = 'approved';
+  let confidence = 0.9;
+  let verdictSummary = 'No critical issues detected in documentation changes.';
+  
+  if (errors.length > 0) {
+    verdict = 'changes_requested';
+    confidence = 0.95;
+    verdictSummary = `${errors.length} error(s) must be addressed before merging.`;
+  } else if (warnings.length > 3) {
+    verdict = 'commented';
+    confidence = 0.7;
+    verdictSummary = `${warnings.length} warnings should be reviewed.`;
+  } else if (warnings.length > 0) {
+    verdict = 'approved';
+    confidence = 0.8;
+    verdictSummary = `${warnings.length} warning(s) noted but not blocking.`;
+  }
+  
+  // Generate key risks from errors and warnings
+  const keyRisks: RiskItem[] = [];
+  
+  for (const error of errors.slice(0, 3)) {
+    keyRisks.push({
+      severity: 'high',
+      category: error.category,
+      description: error.message.slice(0, 200),
+      evidence: error.file ? `File: ${error.file}${error.line ? `:${error.line}` : ''}` : 'General',
+      suggestion: error.suggestion || 'Fix the error before merging.',
+    });
+  }
+  
+  for (const warning of warnings.slice(0, 2)) {
+    keyRisks.push({
+      severity: 'medium',
+      category: warning.category,
+      description: warning.message.slice(0, 200),
+      evidence: warning.file ? `File: ${warning.file}${warning.line ? `:${warning.line}` : ''}` : 'General',
+      suggestion: warning.suggestion || 'Consider addressing this warning.',
+    });
+  }
+  
+  // Generate checklist based on doc type
+  const checklist: ReviewerChecklistItem[] = [];
+  
+  // Add doc-type specific items
+  if (docType.type === 'sop') {
+    checklist.push(
+      { category: 'docs', item: 'SOP includes clear step-by-step instructions', priority: 'required' },
+      { category: 'docs', item: 'Prerequisites are documented', priority: 'required' },
+      { category: 'testing', item: 'Process has been tested successfully', priority: 'recommended' },
+    );
+  } else if (docType.type === 'readme') {
+    checklist.push(
+      { category: 'docs', item: 'README includes installation instructions', priority: 'required' },
+      { category: 'docs', item: 'README includes usage examples', priority: 'required' },
+    );
+  } else if (docType.type === 'api') {
+    checklist.push(
+      { category: 'docs', item: 'API endpoints have clear descriptions', priority: 'required' },
+      { category: 'docs', item: 'Request/response formats are documented', priority: 'required' },
+    );
+  }
+  
+  // Add general items based on changes
+  if (semanticDiff.stats.added > 0) {
+    checklist.push({ category: 'docs', item: 'New sections have clear headings', priority: 'recommended' });
+  }
+  if (semanticDiff.stats.removed > 0) {
+    checklist.push({ category: 'docs', item: 'Removed content is reflected in navigation/index', priority: 'recommended' });
+  }
+  if (semanticDiff.stats.modified > 0) {
+    checklist.push({ category: 'docs', item: 'Modified sections are consistent with rest of doc', priority: 'recommended' });
+  }
+  
+  // Build PR intent from title and diff stats
+  const prIntent = prContext.body 
+    ? prContext.body.slice(0, 200) 
+    : `Update ${docType.type} documentation with ${semanticDiff.stats.added + semanticDiff.stats.modified} section change(s).`;
+  
+  // Build change overview
+  const stats = semanticDiff.stats;
+  const changeOverview = `${stats.added} section(s) added, ${stats.removed} removed, ${stats.modified} modified. ${errors.length} error(s), ${warnings.length} warning(s) found.`;
+  
+  return {
+    prIntent: prIntent.slice(0, 300),
+    changeOverview,
+    keyRisks,
+    checklist: checklist.slice(0, 8),
+    prBodySuggestion: { sections: [] },
+    verdict: {
+      verdict,
+      confidence,
+      summary: verdictSummary,
+    },
+  };
+}
+
+/**
  * Legacy function - kept for backward compatibility
  */
 export async function generateAISummary(
@@ -257,7 +367,7 @@ Changes: +${diff.stats.added} added, -${diff.stats.removed} removed, ~${diff.sta
       body: JSON.stringify({
         model: 'MiniMax-M2.5',
         messages: [{ role: 'user', content: simplePrompt }],
-        groupId: config.groupId,
+        group_id: config.groupId,
         temperature: 0.3,
         max_tokens: 50,
       }),

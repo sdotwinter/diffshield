@@ -4,7 +4,7 @@ import { ReviewResult, CheckRunConclusion, WebhookPayload, DocDocument, Semantic
 import { parseMarkdown } from '../lib/markdown';
 import { computeSemanticDiff, generateDiffSummary } from '../lib/diff';
 import { classifyDocument, generateReviewChecklist, validateLinks } from '../lib/classifier';
-import { generateAISummary, generateV2Review, generateV2PRDescription } from '../lib/ai';
+import { generateAISummary, generateV2Review, generateV2PRDescription, generateDeterministicFallback } from '../lib/ai';
 
 interface GitHubClient {
   octokit: Octokit;
@@ -144,17 +144,6 @@ export async function handlePullRequest(
     const diff = computeSemanticDiff(oldDoc, newDoc);
     changes.push(...diff.sections);
     
-    // Add diff content to findings (show key changes)
-    if (file.patch) {
-      const lines = file.patch.split('\n').slice(0, 10);
-      allFindings.push({
-        type: 'info',
-        category: 'diff',
-        message: `\`\`\`\n${lines.join('\n')}\n\`\`\``,
-        file: file.filename,
-      });
-    }
-    
     // Generate findings
     const fileFindings = analyzeChanges(file.filename, diff, oldDoc, newDoc);
     allFindings.push(...fileFindings);
@@ -178,18 +167,9 @@ export async function handlePullRequest(
         message: `${file.filename}: +${linesAdded} -${linesRemoved}`,
       });
       
-      // Store diff snippet for AI
+      // Store diff snippet for AI (not as finding - curated separately)
       if (file.patch) {
         diffContent.push(`\n${file.filename}:\n${file.patch.slice(0, 1500)}`);
-        
-        // Add first few lines of diff to findings
-        const diffLines = file.patch.split('\n').slice(0, 8);
-        allFindings.push({
-          type: 'info',
-          category: 'diff',
-          message: `\`\`\`\n${diffLines.join('\n')}\n\`\`\``,
-          file: file.filename,
-        });
       }
     }
   }
@@ -260,20 +240,27 @@ export async function handlePullRequest(
         aiSummary = v2Review.changeOverview;
         prDescription = await generateV2PRDescription(v2Review);
       } else {
-        // Fallback to legacy summary
-        aiSummary = await generateAISummary(
+        // Use deterministic fallback when AI parsing fails
+        v2Review = generateDeterministicFallback(
+          prContext,
           docType || { type: 'other', confidence: 0, indicators: [] },
           semanticDiff,
-          allFindings,
-          {
-            apiKey: process.env.MINIMAX_API_KEY,
-            groupId: process.env.MINIMAX_GROUP_ID,
-          },
-          codeFilesInfo
+          allFindings
         );
+        aiSummary = v2Review.changeOverview;
+        prDescription = '';
       }
     } catch (e) {
       console.error('AI summary error:', e);
+      // Use deterministic fallback on error
+      v2Review = generateDeterministicFallback(
+        prContext,
+        docType || { type: 'other', confidence: 0, indicators: [] },
+        semanticDiff,
+        allFindings
+      );
+      aiSummary = v2Review.changeOverview;
+      prDescription = '';
     }
   }
   
