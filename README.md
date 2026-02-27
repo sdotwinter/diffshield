@@ -11,6 +11,7 @@ Automated PR reviews for your documentation. Get instant feedback on markdown ch
 - **Contextual Checklists** - Review items based on document type and PR intent
 - **Link Validation** - Catches broken internal links
 - **GitHub Integration** - Checks + comments with verdict and confidence on every PR
+- **Confidence Labels** - Distinguishes verdict confidence from doc-type confidence
 
 ## Quick Start
 
