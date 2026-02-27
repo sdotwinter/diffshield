@@ -12,6 +12,9 @@ export interface PullRequest {
   number: number;
   title: string;
   body: string;
+  user?: {
+    login: string;
+  };
   head: {
     ref: string;
     sha: string;
@@ -130,6 +133,61 @@ export interface ReviewResult {
   summary: string;
   aiSummary?: string;
   prDescription?: string;
+}
+
+// V2 PR Review Schema Types
+export interface PRContext {
+  title: string;
+  body: string | null;
+  author: string;
+  baseRef: string;
+  headRef: string;
+  baseSha: string;
+  headSha: string;
+}
+
+export interface FileChangeSummary {
+  filename: string;
+  status: 'added' | 'removed' | 'modified' | 'renamed';
+  additions: number;
+  deletions: number;
+  patch?: string;
+}
+
+export interface RiskItem {
+  severity: 'high' | 'medium' | 'low';
+  category: string;
+  description: string;
+  evidence: string;
+  suggestion: string;
+}
+
+export interface ReviewerChecklistItem {
+  category: string;
+  item: string;
+  priority: 'required' | 'recommended' | 'optional';
+}
+
+export interface V2Verdict {
+  verdict: 'approved' | 'changes_requested' | 'commented';
+  confidence: number;
+  summary: string;
+}
+
+export interface PRBodySuggestion {
+  sections: Array<{
+    heading: string;
+    content: string;
+  }>;
+}
+
+export interface V2ReviewOutput {
+  prIntent: string;
+  changeOverview: string;
+  keyRisks: RiskItem[];
+  checklist: ReviewerChecklistItem[];
+  prBodySuggestion: PRBodySuggestion;
+  verdict: V2Verdict;
 }
 
 // Check run payload

@@ -1,10 +1,10 @@
 import { Octokit } from '@octokit/rest';
 import { createAppAuth } from '@octokit/auth-app';
-import { ReviewResult, CheckRunConclusion, WebhookPayload, DocDocument, SemanticDiff, DocTypeClassification, ReviewFinding, DocSection } from '../types';
+import { ReviewResult, CheckRunConclusion, WebhookPayload, DocDocument, SemanticDiff, DocTypeClassification, ReviewFinding, DocSection, PRContext, V2ReviewOutput } from '../types';
 import { parseMarkdown } from '../lib/markdown';
 import { computeSemanticDiff, generateDiffSummary } from '../lib/diff';
 import { classifyDocument, generateReviewChecklist, validateLinks } from '../lib/classifier';
-import { generateAISummary } from '../lib/ai';
+import { generateAISummary, generateV2Review, generateV2PRDescription } from '../lib/ai';
 
 interface GitHubClient {
   octokit: Octokit;
@@ -225,12 +225,27 @@ export async function handlePullRequest(
     });
   }
   
-  // Generate AI summary if API key is configured
+  // Build PR context for v2 AI review
+  const prContext: PRContext = {
+    title: pull_request.title,
+    body: pull_request.body,
+    author: pull_request.user?.login || 'unknown',
+    baseRef: pull_request.base.ref,
+    headRef: pull_request.head.ref,
+    baseSha: pull_request.base.sha,
+    headSha: pull_request.head.sha,
+  };
+  
+  // Generate v2 AI review if API key is configured
+  let v2Review: V2ReviewOutput | null = null;
   let aiSummary = '';
   let prDescription = '';
+  
   if (process.env.MINIMAX_API_KEY && process.env.MINIMAX_GROUP_ID) {
     try {
-      aiSummary = await generateAISummary(
+      // Use v2 review with rich context
+      v2Review = await generateV2Review(
+        prContext,
         docType || { type: 'other', confidence: 0, indicators: [] },
         semanticDiff,
         allFindings,
@@ -241,18 +256,22 @@ export async function handlePullRequest(
         codeFilesInfo
       );
       
-      // Generate PR description
-      const { generatePRDescription } = await import('../lib/ai');
-      prDescription = await generatePRDescription(
-        docType || { type: 'other', confidence: 0, indicators: [] },
-        semanticDiff,
-        allFindings,
-        {
-          apiKey: process.env.MINIMAX_API_KEY,
-          groupId: process.env.MINIMAX_GROUP_ID,
-        },
-        codeFilesInfo
-      );
+      if (v2Review) {
+        aiSummary = v2Review.changeOverview;
+        prDescription = await generateV2PRDescription(v2Review);
+      } else {
+        // Fallback to legacy summary
+        aiSummary = await generateAISummary(
+          docType || { type: 'other', confidence: 0, indicators: [] },
+          semanticDiff,
+          allFindings,
+          {
+            apiKey: process.env.MINIMAX_API_KEY,
+            groupId: process.env.MINIMAX_GROUP_ID,
+          },
+          codeFilesInfo
+        );
+      }
     } catch (e) {
       console.error('AI summary error:', e);
     }
@@ -266,6 +285,7 @@ export async function handlePullRequest(
     summary,
     aiSummary,
     prDescription,
+    v2Review,
   });
   
   return {
@@ -351,9 +371,42 @@ async function postReviewResults(
     summary: string;
     aiSummary?: string;
     prDescription?: string;
+    v2Review?: V2ReviewOutput | null;
   }
 ) {
-  const { docType, semanticDiff, findings, summary, aiSummary, prDescription } = result;
+  const { docType, semanticDiff, findings, summary, aiSummary, prDescription, v2Review } = result;
+  
+  // Determine verdict and conclusion based on v2Review or findings
+  let verdict = 'commented';
+  let conclusion: CheckRunConclusion['conclusion'] = 'neutral';
+  
+  if (v2Review?.verdict) {
+    // Use v2 verdict
+    const v = v2Review.verdict;
+    verdict = v.verdict;
+    if (v.verdict === 'approved') {
+      conclusion = 'success';
+    } else if (v.verdict === 'changes_requested') {
+      conclusion = 'failure';
+    } else {
+      conclusion = 'neutral';
+    }
+  } else {
+    // Fallback: determine from findings
+    const errors = findings.filter(f => f.type === 'error');
+    const warnings = findings.filter(f => f.type === 'warning');
+    
+    if (errors.length > 0) {
+      verdict = 'changes_requested';
+      conclusion = 'failure';
+    } else if (warnings.length > 2) {
+      verdict = 'commented';
+      conclusion = 'neutral';
+    } else {
+      verdict = 'approved';
+      conclusion = 'success';
+    }
+  }
   
   // Update PR description if we have one (but don't post as comment)
   if (prDescription && !pullRequest.body) {
@@ -370,12 +423,16 @@ async function postReviewResults(
     }
   }
   
-  // Create check run
+  // Build check title based on verdict
+  const verdictEmoji = verdict === 'approved' ? '✅' : verdict === 'changes_requested' ? '❌' : '💬';
+  const checkTitle = `${verdictEmoji} Doc Review: ${docType.type.toUpperCase()} - ${verdict}`;
+  
+  // Create check run with verdict-based conclusion
   const checkBody: CheckRunConclusion = {
-    conclusion: 'success',
+    conclusion,
     output: {
-      title: `Doc Review: ${docType.type.toUpperCase()} - ${summary}`,
-      summary: generateCheckSummary(findings, docType),
+      title: checkTitle,
+      summary: generateCheckSummary(findings, docType, v2Review),
       annotations: findings
         .filter(f => f.file && f.line)
         .slice(0, 50) // GitHub limit
@@ -403,8 +460,10 @@ async function postReviewResults(
     console.error('Failed to create check run:', err);
   }
   
-  // Post comment
-  const commentBody = generatePRComment(docType, semanticDiff, findings, aiSummary);
+  // Post comment using v2 format or fallback
+  const commentBody = v2Review 
+    ? generateV2PRComment(docType, semanticDiff, findings, v2Review)
+    : generatePRComment(docType, semanticDiff, findings, aiSummary);
   
   try {
     await github.octokit.issues.createComment({
@@ -418,14 +477,95 @@ async function postReviewResults(
   }
 }
 
-function generateCheckSummary(findings: ReviewFinding[], docType: DocTypeClassification): string {
+function generateCheckSummary(findings: ReviewFinding[], docType: DocTypeClassification, v2Review?: V2ReviewOutput | null): string {
   const errors = findings.filter(f => f.type === 'error').length;
   const warnings = findings.filter(f => f.type === 'warning').length;
   const infos = findings.filter(f => f.type === 'info').length;
   
-  return `Doc Type: ${docType.type} (${Math.round(docType.confidence * 100)}% confidence)
+  let summary = `Doc Type: ${docType.type} (${Math.round(docType.confidence * 100)}% confidence)`;
   
-${errors} error(s), ${warnings} warning(s), ${infos} info(s)`;
+  if (v2Review?.verdict) {
+    const v = v2Review.verdict;
+    summary += `\nVerdict: ${v.verdict} (${Math.round(v.confidence * 100)}% confidence)\n${v.summary}`;
+  }
+  
+  summary += `\n\n${errors} error(s), ${warnings} warning(s), ${infos} info(s)`;
+  
+  return summary;
+}
+
+/**
+ * Generate v2 PR comment with structured sections
+ */
+function generateV2PRComment(
+  docType: DocTypeClassification,
+  semanticDiff: SemanticDiff,
+  findings: ReviewFinding[],
+  v2Review: V2ReviewOutput
+): string {
+  const { prIntent, changeOverview, keyRisks, checklist, verdict } = v2Review;
+  
+  // Verdict emoji and label
+  const verdictEmoji = verdict.verdict === 'approved' ? '✅' : verdict.verdict === 'changes_requested' ? '❌' : '💬';
+  const verdictLabel = verdict.verdict === 'approved' ? 'APPROVED' : verdict.verdict === 'changes_requested' ? 'CHANGES REQUESTED' : 'COMMENTED';
+  
+  let comment = `## 🛡️ DiffShield Review\n\n`;
+  
+  // Verdict header
+  comment += `### ${verdictEmoji} **${verdictLabel}** (${Math.round(verdict.confidence * 100)}% confidence)\n`;
+  comment += `${verdict.summary}\n\n---\n\n`;
+  
+  // PR Intent
+  comment += `### 🎯 PR Intent\n${prIntent}\n\n`;
+  
+  // Change Overview
+  comment += `### 📝 Change Overview\n`;
+  comment += `${changeOverview}\n\n`;
+  comment += `**Diff Stats:** +${semanticDiff.stats.added} added, -${semanticDiff.stats.removed} removed, ~${semanticDiff.stats.modified} modified, »${semanticDiff.stats.moved} moved\n\n`;
+  
+  // Key Risks (top 3-5)
+  if (keyRisks.length > 0) {
+    comment += `### ⚠️ Key Risks\n`;
+    for (const risk of keyRisks.slice(0, 5)) {
+      const severityIcon = risk.severity === 'high' ? '🔴' : risk.severity === 'medium' ? '🟡' : '🟢';
+      comment += `${severityIcon} **${risk.severity.toUpperCase()}** [${risk.category}]\n`;
+      comment += `> ${risk.description}\n`;
+      if (risk.evidence) {
+        comment += `*Evidence:* ${risk.evidence}\n`;
+      }
+      if (risk.suggestion) {
+        comment += `*Suggestion:* ${risk.suggestion}\n`;
+      }
+      comment += `\n`;
+    }
+    comment += `\n`;
+  }
+  
+  // Reviewer Checklist (top 8 items, prioritized)
+  if (checklist.length > 0) {
+    comment += `### ✅ Reviewer Checklist\n`;
+    for (const item of checklist.slice(0, 8)) {
+      const priorityIcon = item.priority === 'required' ? '🔴' : item.priority === 'recommended' ? '🟡' : '⚪';
+      comment += `${priorityIcon} [${item.priority.toUpperCase()}] ${item.category}: ${item.item}\n`;
+    }
+    comment += `\n`;
+  }
+  
+  // Add minimal findings if no v2 review or there are critical issues
+  const criticalFindings = findings.filter(f => f.type === 'error' || f.type === 'warning').slice(0, 3);
+  if (criticalFindings.length > 0 && !v2Review) {
+    comment += `### 🔍 Critical Findings\n`;
+    for (const f of criticalFindings) {
+      const icon = f.type === 'error' ? '❌' : '⚠️';
+      comment += `${icon} ${f.file ? `[${f.file}] ` : ''}${f.message}\n`;
+    }
+    comment += `\n`;
+  }
+  
+  // Doc type footer
+  comment += `---\n*Doc Type: ${docType.type.toUpperCase()} (${Math.round(docType.confidence * 100)}% confidence) • DiffShield v2*`;
+  
+  return comment;
 }
 
 function generatePRComment(
